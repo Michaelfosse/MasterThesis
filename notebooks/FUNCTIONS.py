@@ -72,17 +72,25 @@ class NiiDataset(Dataset):
         return normalized_image
 
 
-# Load datasets
-def load_datasets(df, image_type):
+# Load datasets with optional sample_size
+def load_datasets(df, image_type, sample_size=None):
     train_df = df[df['dataset_split'] == 'train']
     val_df = df[df['dataset_split'] == 'validation']
     test_df = df[df['dataset_split'] == 'test']
-    
-    train_dataset = NiiDataset(train_df)
-    val_dataset = NiiDataset(val_df)
-    test_dataset = NiiDataset(test_df)
+
+    # If sample_size is specified, only take the first 'sample_size' samples from each set
+    if sample_size is not None:
+        train_df = train_df.head(sample_size)
+        val_df = val_df.head(sample_size)
+        test_df = test_df.head(sample_size)
+
+    # Creating dataset objects
+    train_dataset = NiiDataset(train_df, image_type=image_type)
+    val_dataset = NiiDataset(val_df, image_type=image_type)
+    test_dataset = NiiDataset(test_df, image_type=image_type)
     
     return train_dataset, val_dataset, test_dataset
+
 
 
 def create_dataloaders(train_dataset, val_dataset, test_dataset, batch_size=4):
@@ -164,7 +172,7 @@ def train_and_validate(model, train_loader, val_loader, criterion, optimizer, la
 
 
 
-def test_model(model, test_loader, label_mapping, device='cpu'):
+def test_model(model, test_loader, label_mapping, device='cuda'):
     model.to(device)
     model.eval()
     test_results = []
