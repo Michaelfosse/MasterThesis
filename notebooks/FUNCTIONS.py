@@ -72,17 +72,18 @@ class NiiDataset(Dataset):
         return normalized_image
 
 
-# Load datasets with optional sample_size
 def load_datasets(df, image_type, sample_size=None):
     train_df = df[df['dataset_split'] == 'train']
     val_df = df[df['dataset_split'] == 'validation']
     test_df = df[df['dataset_split'] == 'test']
 
-    # If sample_size is specified, only take the first 'sample_size' samples from each set
+    # If sample_size is specified, randomly select 'sample_size' samples from train and validation sets
     if sample_size is not None:
-        train_df = train_df.head(sample_size)
-        val_df = val_df.head(sample_size)
-        test_df = test_df.head(sample_size)
+        # Ensure there are enough samples in each subset to sample from
+        if len(train_df) >= sample_size:
+            train_df = train_df.sample(sample_size, random_state=42)  # For reproducibility
+        if len(val_df) >= sample_size:
+            val_df = val_df.sample(sample_size, random_state=42)
 
     # Creating dataset objects
     train_dataset = NiiDataset(train_df, image_type=image_type)
@@ -94,9 +95,9 @@ def load_datasets(df, image_type, sample_size=None):
 
 
 def create_dataloaders(train_dataset, val_dataset, test_dataset, batch_size=4):
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=True)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, drop_last=True)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=True, drop_last=True)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True, drop_last=True)
     
     return train_loader, val_loader, test_loader
 
@@ -110,7 +111,9 @@ def train_and_validate(model, train_loader, val_loader, criterion, optimizer, la
     val_accuracies = []
     val_losses = []  # To store validation losses for monitoring
     best_val_loss = float('inf')
-    epochs_no_improve = 0  # Counter for epochs with no improvement
+    best_val_accuracy = 0  # Initialize the best validation accuracy
+    epochs_no_improve_loss = 0  # Counter for epochs with no improvement in loss
+    epochs_no_improve_acc = 0  # Counter for epochs with no improvement in accuracy
 
     for epoch in range(num_epochs):
         model.train()  # Set model to training mode
@@ -157,18 +160,27 @@ def train_and_validate(model, train_loader, val_loader, criterion, optimizer, la
         val_accuracies.append(val_accuracy)
         print(f'Epoch {epoch+1}: Validation Loss: {val_avg_loss:.4f} - Validation Accuracy: {val_accuracy:.2f}%')
         
-        # Early stopping logic
+        # Early stopping logic based on loss
         if val_avg_loss < best_val_loss:
             best_val_loss = val_avg_loss
-            epochs_no_improve = 0
+            epochs_no_improve_loss = 0
         else:
-            epochs_no_improve += 1
+            epochs_no_improve_loss += 1
         
-        if epochs_no_improve >= patience:
-            print(f'Early stopping triggered after {epoch + 1} epochs.')
+        # Early stopping logic based on accuracy
+        if val_accuracy > best_val_accuracy:
+            best_val_accuracy = val_accuracy
+            epochs_no_improve_acc = 0
+        else:
+            epochs_no_improve_acc += 1
+        
+        # Check for early stop condition
+        if epochs_no_improve_loss >= patience or epochs_no_improve_acc >= patience:
+            print(f'Early stopping triggered after {epoch + 1} epochs due to no improvement in validation loss or accuracy.')
             break  # Break out of the loop if no improvement for 'patience' consecutive epochs
 
     return train_accuracies, val_accuracies, val_losses
+
 
 
 
