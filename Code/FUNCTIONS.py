@@ -14,22 +14,45 @@ import numpy as np
 import nibabel as nib
 import torch
 from torch.utils.data import Dataset
+import random
+
+# Set seeds
+torch.manual_seed(42)
+np.random.seed(42)
+random.seed(42)
+
+# Ensure deterministic behavior in PyTorch (may impact performance)
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
+
 
 class NiiDataset(Dataset):
     def __init__(self, df, image_type='MRI_PET', transform=None):
         """
         Initializes the dataset object.
         :param df: DataFrame containing file paths, labels, and subject IDs.
-        :param image_type: Type of images to load ('MRI_PET', 'MRI', or 'PET').
+        :param image_type: Type of images to load. This should directly correspond to the column names in the DataFrame.
         :param transform: A function or a series of transforms to apply to the images.
         """
         self.image_type = image_type
-        if image_type == 'MRI_PET':
-            self.paths = df['PATH_MRI_PET'].tolist()
-        elif image_type == 'MRI':
-            self.paths = df['PATH_MRI'].tolist()
-        elif image_type == 'PET':
-            self.paths = df['PATH_PET'].tolist()
+        # Dictionary mapping the image types to DataFrame column names, directly using the column names as keys
+        column_mapping = {
+            'Co-registered PET': 'Co-registered PET',
+            'Fused Images': 'Fused Images',
+            'Masked PET': 'Masked PET',
+            'Spatial Normalization': 'Spatial Normalization',
+            'Resampled Images(Co-registered PET)': 'Resampled Images(Co-registered PET)',
+            'Resampled Images(Masked PET)': 'Resampled Images(Masked PET)',
+            'Resampled Images(Spatial Normalization)': 'Resampled Images(Spatial Normalization)',
+            'Resampled Images_fused': 'Resampled Images_fused'
+        }
+
+        # Check if the image type exists in the mapping and assign paths
+        if image_type in column_mapping:
+            self.paths = df[column_mapping[image_type]].tolist()
+        else:
+            raise ValueError(f"Unknown image type: {image_type}")
+        
         self.labels = pd.Categorical(df['Research Group']).codes
         self.subjects = df['Subject'].tolist()
         self.transform = transform
@@ -57,7 +80,6 @@ class NiiDataset(Dataset):
         Load a NIfTI file and normalize its intensity.
         """
         image = nib.load(path).get_fdata(dtype=np.float32)
-        image = self.normalize_intensity(image)
         image = np.expand_dims(image, axis=0)  # Add a channel dimension
         return image
 
@@ -94,34 +116,48 @@ def load_datasets(df, image_type, sample_size=None):
 
 
 
-def create_dataloaders(train_dataset, val_dataset, test_dataset, batch_size=4):
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, drop_last=True)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=True, drop_last=True)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True, drop_last=True)
+# Function to initialize the workers of the DataLoader
+def seed_worker(worker_id):
+    worker_seed = torch.initial_seed() % 2**32
+    np.random.seed(worker_seed)
+    random.seed(worker_seed)
+
+# Create data loaders with seed settings for reproducibility
+def create_dataloaders(train_dataset, val_dataset, test_dataset, batch_size=4, num_workers=0):
+    # Creating a generator for seeding (Recommended for PyTorch >= 1.6)
+    g = torch.Generator()
+    g.manual_seed(42)
+
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True,
+                              drop_last=True, num_workers=num_workers, worker_init_fn=seed_worker, generator=g)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False,
+                            drop_last=True, num_workers=num_workers, worker_init_fn=seed_worker, generator=g)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False,
+                             drop_last=True, num_workers=num_workers, worker_init_fn=seed_worker, generator=g)
     
     return train_loader, val_loader, test_loader
 
 
-import torch
-from tqdm import tqdm
 
-def train_and_validate(model, train_loader, val_loader, criterion, optimizer, label_mapping, num_epochs=10, patience=5, device='cuda'):
+def train_and_validate(model, train_loader, val_loader, criterion, optimizer, num_epochs=10, patience=5, device='cuda'):
     model.to(device)
     train_accuracies = []
     val_accuracies = []
     val_losses = []  # To store validation losses for monitoring
+    training_summary = []  # List to store epoch, loss, and accuracy for DataFrame
+    
     best_val_loss = float('inf')
-    best_val_accuracy = 0  # Initialize the best validation accuracy
-    epochs_no_improve_loss = 0  # Counter for epochs with no improvement in loss
-    epochs_no_improve_acc = 0  # Counter for epochs with no improvement in accuracy
+    best_val_accuracy = 0
+    epochs_no_improve_loss = 0
+    epochs_no_improve_acc = 0
 
     for epoch in range(num_epochs):
         model.train()  # Set model to training mode
         train_correct = 0
         train_total = 0
         train_epoch_losses = []
-        
-        for images, labels, _, _ in tqdm(train_loader, desc=f'Epoch {epoch+1}/{num_epochs} - Train'):
+
+        for images, labels in tqdm(train_loader, desc=f'Epoch {epoch+1}/{num_epochs} - Train'):
             images, labels = images.to(device), labels.to(device)
             optimizer.zero_grad()
             outputs = model(images)
@@ -138,14 +174,14 @@ def train_and_validate(model, train_loader, val_loader, criterion, optimizer, la
         train_accuracy = 100 * train_correct / train_total
         train_accuracies.append(train_accuracy)
         print(f'Epoch {epoch+1}: Train Loss: {train_avg_loss:.4f} - Train Accuracy: {train_accuracy:.2f}%')
-        
+
         # Validation phase at the end of each epoch
         model.eval()  # Set model to evaluation mode
         val_correct = 0
         val_total = 0
         val_epoch_losses = []
         with torch.no_grad():
-            for images, labels, _, _ in tqdm(val_loader, desc=f'Epoch {epoch+1}/{num_epochs} - Validate'):
+            for images, labels in tqdm(val_loader, desc=f'Epoch {epoch+1}/{num_epochs} - Validate'):
                 images, labels = images.to(device), labels.to(device)
                 outputs = model(images)
                 val_loss = criterion(outputs, labels)
@@ -155,32 +191,36 @@ def train_and_validate(model, train_loader, val_loader, criterion, optimizer, la
                 val_correct += (predicted_indices == labels).sum().item()
 
         val_avg_loss = sum(val_epoch_losses) / len(val_epoch_losses)
-        val_losses.append(val_avg_loss)
         val_accuracy = 100 * val_correct / val_total
         val_accuracies.append(val_accuracy)
+        val_losses.append(val_avg_loss)
+        training_summary.append((epoch+1, val_avg_loss, val_accuracy))
         print(f'Epoch {epoch+1}: Validation Loss: {val_avg_loss:.4f} - Validation Accuracy: {val_accuracy:.2f}%')
-        
-        # Early stopping logic based on loss
+
+        # Early stopping logic based on loss and accuracy
         if val_avg_loss < best_val_loss:
             best_val_loss = val_avg_loss
             epochs_no_improve_loss = 0
         else:
             epochs_no_improve_loss += 1
-        
-        # Early stopping logic based on accuracy
+
         if val_accuracy > best_val_accuracy:
             best_val_accuracy = val_accuracy
             epochs_no_improve_acc = 0
         else:
             epochs_no_improve_acc += 1
-        
-        # Check for early stop condition
+
         if epochs_no_improve_loss >= patience or epochs_no_improve_acc >= patience:
             print(f'Early stopping triggered after {epoch + 1} epochs due to no improvement in validation loss or accuracy.')
-            break  # Break out of the loop if no improvement for 'patience' consecutive epochs
+            break
 
-    return train_accuracies, val_accuracies, val_losses
+    results_df = pd.DataFrame(training_summary, columns=['Epoch', 'Validation Loss', 'Validation Accuracy'])
+    return train_accuracies, val_accuracies, val_losses, results_df
 
+# Example usage:
+# Assuming model, train_loader, val_loader, criterion, and optimizer are defined
+# train_acc, val_acc, val_loss, results_df = train_and_validate(model, train_loader, val_loader, criterion, optimizer)
+# print(results_df)
 
 
 
