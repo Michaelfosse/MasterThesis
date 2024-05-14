@@ -27,15 +27,15 @@ torch.backends.cudnn.benchmark = False
 
 
 class NiiDataset(Dataset):
-    def __init__(self, df, image_type='MRI_PET', transform=None):
+    def __init__(self, df, image_type='MRI_PET', transform=None, loss_type=None):
         """
         Initializes the dataset object.
         :param df: DataFrame containing file paths, labels, and subject IDs.
         :param image_type: Type of images to load. This should directly correspond to the column names in the DataFrame.
         :param transform: A function or a series of transforms to apply to the images.
+        :param loss_type: The type of loss function that will be used ('crossentropy' or 'bcelogits').
         """
         self.image_type = image_type
-        # Dictionary mapping the image types to DataFrame column names, directly using the column names as keys
         column_mapping = {
             'Co-registered PET': 'Co-registered PET',
             'Fused Images': 'Fused Images',
@@ -46,8 +46,6 @@ class NiiDataset(Dataset):
             'Resampled Images(Spatial Normalization)': 'Resampled Images(Spatial Normalization)',
             'Resampled Images_fused': 'Resampled Images_fused'
         }
-
-        # Check if the image type exists in the mapping and assign paths
         if image_type in column_mapping:
             self.paths = df[column_mapping[image_type]].tolist()
         else:
@@ -56,37 +54,31 @@ class NiiDataset(Dataset):
         self.labels = pd.Categorical(df['Research Group']).codes
         self.subjects = df['Subject'].tolist()
         self.transform = transform
-
+        self.loss_type = loss_type
+        
     def __len__(self):
-        """
-        Returns the total number of samples in the dataset.
-        """
-        return len(self.paths)
+        return len(self.paths)  # This returns the total number of samples in the dataset
 
     def __getitem__(self, idx):
-        """
-        Retrieve the nth sample from the dataset.
-        """
         path = self.paths[idx]
         image = self.load_nii(path)
         if self.transform:
             image = self.transform(image)
         label = torch.tensor(self.labels[idx], dtype=torch.long)
-        subject = self.subjects[idx]
-        return image, label, path, subject
+
+        if self.loss_type == 'BCEWithLogits':
+            # Ensure label is a float and has an extra dimension to match output
+            label = label.float().unsqueeze(0)
+
+        return image, label, path, self.subjects[idx]
 
     def load_nii(self, path):
-        """
-        Load a NIfTI file and normalize its intensity.
-        """
         image = nib.load(path).get_fdata(dtype=np.float32)
         image = np.expand_dims(image, axis=0)  # Add a channel dimension
         return image
 
 
-
-
-def load_datasets(df, image_type, sample_size=None):
+def load_datasets(df, image_type, sample_size=None, loss_type=None):
     train_df = df[df['dataset_split'] == 'train']
     val_df = df[df['dataset_split'] == 'validation']
     test_df = df[df['dataset_split'] == 'test']
@@ -100,9 +92,9 @@ def load_datasets(df, image_type, sample_size=None):
             val_df = val_df.sample(sample_size, random_state=42)
 
     # Creating dataset objects
-    train_dataset = NiiDataset(train_df, image_type=image_type)
-    val_dataset = NiiDataset(val_df, image_type=image_type)
-    test_dataset = NiiDataset(test_df, image_type=image_type)
+    train_dataset = NiiDataset(train_df, image_type=image_type, loss_type=loss_type)
+    val_dataset = NiiDataset(val_df, image_type=image_type, loss_type=loss_type)
+    test_dataset = NiiDataset(test_df, image_type=image_type, loss_type=loss_type)
     
     return train_dataset, val_dataset, test_dataset
 
@@ -131,13 +123,29 @@ def create_dataloaders(train_dataset, val_dataset, test_dataset, batch_size=4, n
 
 
 
-def train_and_validate(model, train_loader, val_loader, criterion, optimizer, num_epochs=10, patience=5, device='cuda'):
+def compute_accuracy(outputs, labels, loss_type):
+    if loss_type == 'Cross-Entropy':
+        _, predicted_indices = torch.max(outputs, 1)
+        correct = (predicted_indices == labels).sum().item()
+    elif loss_type == 'BCEWithLogits':
+        probs = torch.sigmoid(outputs)
+        predicted_indices = (probs > 0.5).float()
+        correct = (predicted_indices == labels).float().sum().item()
+    else:
+        raise ValueError(f"Unsupported loss type: {loss_type}")
+    
+    return correct
+
+
+
+
+def train_and_validate(model, train_loader, val_loader, criterion, optimizer, num_epochs, patience, device, loss_type):
     model.to(device)
     train_accuracies = []
     val_accuracies = []
     val_losses = []
     training_summary = []
-    
+
     best_val_loss = float('inf')
     best_val_accuracy = 0
     epochs_no_improve_loss = 0
@@ -158,11 +166,10 @@ def train_and_validate(model, train_loader, val_loader, criterion, optimizer, nu
             optimizer.step()
             train_epoch_losses.append(loss.item())
 
-            _, predicted_indices = torch.max(outputs, 1)
-            train_total += labels.size(0)
-            train_correct += (predicted_indices == labels).sum().item()
+            train_correct += compute_accuracy(outputs, labels, loss_type)
+            train_total += labels.numel()
 
-        train_avg_loss = sum(train_epoch_losses) / len(train_epoch_losses)
+        train_avg_loss = sum(train_epoch_losses) / len(train_epoch_losses)  # Calculate average loss here
         train_accuracy = 100 * train_correct / train_total
         train_accuracies.append(train_accuracy)
         print(f'Epoch {epoch+1}: Train Loss: {train_avg_loss:.4f} - Train Accuracy: {train_accuracy:.2f}%')
@@ -177,26 +184,25 @@ def train_and_validate(model, train_loader, val_loader, criterion, optimizer, nu
                 outputs = model(images)
                 val_loss = criterion(outputs, labels)
                 val_epoch_losses.append(val_loss.item())
-                _, predicted_indices = torch.max(outputs, 1)
-                val_total += labels.size(0)
-                val_correct += (predicted_indices == labels).sum().item()
+
+                val_correct += compute_accuracy(outputs, labels, loss_type)
+                val_total += labels.numel()
 
         val_avg_loss = sum(val_epoch_losses) / len(val_epoch_losses)
-        val_accuracy = 100 * val_correct / val_total
-        val_accuracies.append(val_accuracy)
+        val_accuracies.append(100 * val_correct / val_total)
         val_losses.append(val_avg_loss)
-        training_summary.append((epoch+1, val_avg_loss, val_accuracy))
-        print(f'Epoch {epoch+1}: Validation Loss: {val_avg_loss:.4f} - Validation Accuracy: {val_accuracy:.2f}%')
+        training_summary.append((epoch+1, val_avg_loss, val_accuracies[-1]))
+        print(f'Epoch {epoch+1}: Validation Loss: {val_avg_loss:.4f} - Validation Accuracy: {val_accuracies[-1]:.2f}%')
 
         if val_avg_loss < best_val_loss:
             best_val_loss = val_avg_loss
-            epochs_no_improve_loss = 0  # Reset counter on improvement
+            epochs_no_improve_loss = 0
         else:
             epochs_no_improve_loss += 1
 
-        if val_accuracy > best_val_accuracy:
-            best_val_accuracy = val_accuracy
-            epochs_no_improve_acc = 0  # Reset counter on improvement
+        if val_accuracies[-1] > best_val_accuracy:
+            best_val_accuracy = val_accuracies[-1]
+            epochs_no_improve_acc = 0
         else:
             epochs_no_improve_acc += 1
 
@@ -208,6 +214,8 @@ def train_and_validate(model, train_loader, val_loader, criterion, optimizer, nu
     return train_accuracies, val_accuracies, val_losses, results_df
 
 
+
+
 # Example usage:
 # Assuming model, train_loader, val_loader, criterion, and optimizer are defined
 # train_acc, val_acc, val_loss, results_df = train_and_validate(model, train_loader, val_loader, criterion, optimizer)
@@ -215,7 +223,7 @@ def train_and_validate(model, train_loader, val_loader, criterion, optimizer, nu
 
 
 
-def test_model(model, test_loader, label_mapping, device='cuda'):
+def test_model(model, test_loader, label_mapping, device, loss_type):
     model.to(device)
     model.eval()
     test_results = []
@@ -225,21 +233,32 @@ def test_model(model, test_loader, label_mapping, device='cuda'):
         for images, labels, paths, subjects in tqdm(test_loader, desc='Testing'):
             images, labels = images.to(device), labels.to(device)
             outputs = model(images)
-            _, predicted_indices = torch.max(outputs, 1)
-            total += labels.size(0)
-            correct += (predicted_indices == labels).sum().item()
-            predicted_labels = [label_mapping[code] for code in predicted_indices.cpu().numpy()]
+
+            if loss_type == 'Cross-Entropy':
+                _, predicted_indices = torch.max(outputs, 1)
+                correct += (predicted_indices == labels).sum().item()
+                predicted_labels = [label_mapping[int(code)] for code in predicted_indices.cpu().numpy()]
+            elif loss_type == 'BCEWithLogits':
+                probs = torch.sigmoid(outputs)
+                predicted_indices = (probs > 0.5).float()
+                correct += (predicted_indices == labels).float().sum().item()
+                predicted_labels = [label_mapping[int(code)] for code in (probs > 0.5).cpu().int().numpy()]
+            else:
+                raise ValueError(f"Unsupported loss type: {loss_type}")
+
+            total += labels.numel()
 
             for label, pred, path, subject in zip(labels.cpu().numpy(), predicted_labels, paths, subjects):
                 test_results.append({
                     'Subject': subject,
                     'Path': path,
-                    'Actual Label': label_mapping[label.item()],
+                    'Actual Label': label_mapping[int(label)],
                     'Prediction': pred,
                     'Type': 'Test'
                 })
     accuracy = 100 * correct / total
     return test_results, accuracy
+
 
 
 
