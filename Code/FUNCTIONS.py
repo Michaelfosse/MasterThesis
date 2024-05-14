@@ -83,15 +83,7 @@ class NiiDataset(Dataset):
         image = np.expand_dims(image, axis=0)  # Add a channel dimension
         return image
 
-    @staticmethod
-    def normalize_intensity(image):
-        """
-        Normalize the image data to zero mean and unit variance.
-        """
-        mean_intensity = np.mean(image)
-        std_intensity = np.std(image)
-        normalized_image = (image - mean_intensity) / std_intensity
-        return normalized_image
+
 
 
 def load_datasets(df, image_type, sample_size=None):
@@ -143,8 +135,8 @@ def train_and_validate(model, train_loader, val_loader, criterion, optimizer, nu
     model.to(device)
     train_accuracies = []
     val_accuracies = []
-    val_losses = []  # To store validation losses for monitoring
-    training_summary = []  # List to store epoch, loss, and accuracy for DataFrame
+    val_losses = []
+    training_summary = []
     
     best_val_loss = float('inf')
     best_val_accuracy = 0
@@ -152,12 +144,12 @@ def train_and_validate(model, train_loader, val_loader, criterion, optimizer, nu
     epochs_no_improve_acc = 0
 
     for epoch in range(num_epochs):
-        model.train()  # Set model to training mode
+        model.train()
         train_correct = 0
         train_total = 0
         train_epoch_losses = []
 
-        for images, labels in tqdm(train_loader, desc=f'Epoch {epoch+1}/{num_epochs} - Train'):
+        for images, labels, _, _ in tqdm(train_loader, desc=f'Epoch {epoch+1}/{num_epochs} - Train'):
             images, labels = images.to(device), labels.to(device)
             optimizer.zero_grad()
             outputs = model(images)
@@ -175,13 +167,12 @@ def train_and_validate(model, train_loader, val_loader, criterion, optimizer, nu
         train_accuracies.append(train_accuracy)
         print(f'Epoch {epoch+1}: Train Loss: {train_avg_loss:.4f} - Train Accuracy: {train_accuracy:.2f}%')
 
-        # Validation phase at the end of each epoch
-        model.eval()  # Set model to evaluation mode
+        model.eval()
         val_correct = 0
         val_total = 0
         val_epoch_losses = []
         with torch.no_grad():
-            for images, labels in tqdm(val_loader, desc=f'Epoch {epoch+1}/{num_epochs} - Validate'):
+            for images, labels, _, _ in tqdm(val_loader, desc=f'Epoch {epoch+1}/{num_epochs} - Validate'):
                 images, labels = images.to(device), labels.to(device)
                 outputs = model(images)
                 val_loss = criterion(outputs, labels)
@@ -197,16 +188,15 @@ def train_and_validate(model, train_loader, val_loader, criterion, optimizer, nu
         training_summary.append((epoch+1, val_avg_loss, val_accuracy))
         print(f'Epoch {epoch+1}: Validation Loss: {val_avg_loss:.4f} - Validation Accuracy: {val_accuracy:.2f}%')
 
-        # Early stopping logic based on loss and accuracy
         if val_avg_loss < best_val_loss:
             best_val_loss = val_avg_loss
-            epochs_no_improve_loss = 0
+            epochs_no_improve_loss = 0  # Reset counter on improvement
         else:
             epochs_no_improve_loss += 1
 
         if val_accuracy > best_val_accuracy:
             best_val_accuracy = val_accuracy
-            epochs_no_improve_acc = 0
+            epochs_no_improve_acc = 0  # Reset counter on improvement
         else:
             epochs_no_improve_acc += 1
 
@@ -216,6 +206,7 @@ def train_and_validate(model, train_loader, val_loader, criterion, optimizer, nu
 
     results_df = pd.DataFrame(training_summary, columns=['Epoch', 'Validation Loss', 'Validation Accuracy'])
     return train_accuracies, val_accuracies, val_losses, results_df
+
 
 # Example usage:
 # Assuming model, train_loader, val_loader, criterion, and optimizer are defined
