@@ -1,9 +1,9 @@
 Optimizer,Loss Criterion,Learning Rate,Image Type,Report File,Train Accuracy,Validation Accuracy,Test Accuracy
-SGD,BCEWithLogits,0.001,Resampled Images(Masked PET),reports\2024-05-14_14-51-05_Experiment.xlsx,56.9078947368421,46.875,50.0
-Adam,BCEWithLogits,0.001,Resampled Images(Masked PET),reports\2024-05-14_14-56-47_Experiment.xlsx,50.0,56.25,55.0
-SGD,BCEWithLogits,0.05,Resampled Images(Masked PET),reports\2024-05-14_15-01-47_Experiment.xlsx,51.973684210526315,40.625,51.25
-Adam,BCEWithLogits,0.05,Resampled Images(Masked PET),reports\2024-05-14_15-09-43_Experiment.xlsx,45.39473684210526,59.375,50.0
-SGD,BCEWithLogits,0.01,Resampled Images(Masked PET),reports\2024-05-14_15-14-13_Experiment.xlsx,50.98684210526316,40.625,50.0
-Adam,BCEWithLogits,0.01,Resampled Images(Masked PET),reports\2024-05-14_15-18-16_Experiment.xlsx,50.328947368421055,43.75,48.75
-SGD,BCEWithLogits,0.1,Resampled Images(Masked PET),reports\2024-05-14_15-23-07_Experiment.xlsx,50.98684210526316,40.625,52.5
-Adam,BCEWithLogits,0.1,Resampled Images(Masked PET),reports\2024-05-14_15-27-35_Experiment.xlsx,49.671052631578945,40.625,50.0
+SGD,BCEWithLogits,0.001,Fused Images (RESAMPLED TO PET),reports\2024-05-15_11-44-48_Experiment.xlsx,54.166666666666664,50.0,54.166666666666664
+Adam,BCEWithLogits,0.001,Fused Images (RESAMPLED TO PET),reports\2024-05-15_11-47-15_Experiment.xlsx,84.72222222222223,75.0,41.666666666666664
+SGD,BCEWithLogits,0.05,Fused Images (RESAMPLED TO PET),reports\2024-05-15_11-50-15_Experiment.xlsx,59.72222222222222,50.0,50.0
+Adam,BCEWithLogits,0.05,Fused Images (RESAMPLED TO PET),reports\2024-05-15_11-52-44_Experiment.xlsx,68.05555555555556,50.0,54.166666666666664
+SGD,BCEWithLogits,0.01,Fused Images (RESAMPLED TO PET),reports\2024-05-15_11-57-05_Experiment.xlsx,80.55555555555556,37.5,50.0
+Adam,BCEWithLogits,0.01,Fused Images (RESAMPLED TO PET),reports\2024-05-15_12-01-14_Experiment.xlsx,87.5,75.0,50.0
+SGD,BCEWithLogits,0.1,Fused Images (RESAMPLED TO PET),reports\2024-05-15_12-03-57_Experiment.xlsx,56.94444444444444,50.0,45.833333333333336
+Adam,BCEWithLogits,0.1,Fused Images (RESAMPLED TO PET),reports\2024-05-15_12-06-13_Experiment.xlsx,50.0,25.0,54.166666666666664
