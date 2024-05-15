@@ -44,7 +44,9 @@ class NiiDataset(Dataset):
             'Resampled Images(Co-registered PET)': 'Resampled Images(Co-registered PET)',
             'Resampled Images(Masked PET)': 'Resampled Images(Masked PET)',
             'Resampled Images(Spatial Normalization)': 'Resampled Images(Spatial Normalization)',
-            'Resampled Images_fused': 'Resampled Images_fused'
+            'Resampled Images_fused': 'Resampled Images_fused',
+            'Original PET (OLD)': 'Original PET (OLD)', 
+            'Fused Images (RESAMPLED TO PET)' : 'Fused Images (RESAMPLED TO PET)'
         }
         if image_type in column_mapping:
             self.paths = df[column_mapping[image_type]].tolist()
